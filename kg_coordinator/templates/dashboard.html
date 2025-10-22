@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KG Database Management</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .status-pending { @apply bg-yellow-100 text-yellow-800; }
+        .status-processing { @apply bg-blue-100 text-blue-800; }
+        .status-completed { @apply bg-green-100 text-green-800; }
+        .status-failed { @apply bg-red-100 text-red-800; }
+        .status-skipped { @apply bg-gray-100 text-gray-800; }
+
+        .stat-card {
+            @apply bg-white rounded-lg shadow-md p-6 border-l-4;
+        }
+
+        .btn-primary {
+            @apply bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded transition;
+        }
+
+        .btn-danger {
+            @apply bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded transition;
+        }
+
+        .btn-success {
+            @apply bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded transition;
+        }
+
+        .btn-secondary {
+            @apply bg-gray-600 hover:bg-gray-700 text-white font-medium py-2 px-4 rounded transition;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 9999;
+        }
+
+        .modal.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Knowledge Graph Database Manager</h1>
+            <p class="text-gray-600">Manage crawled content and KG processing queue</p>
+        </div>
+
+        <!-- Statistics Dashboard -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="stat-card border-blue-500">
+                <div class="text-gray-500 text-sm font-medium mb-2">Total Content</div>
+                <div class="text-3xl font-bold text-gray-800" id="stat-total">0</div>
+            </div>
+
+            <div class="stat-card border-green-500">
+                <div class="text-gray-500 text-sm font-medium mb-2">KG Processed</div>
+                <div class="text-3xl font-bold text-green-600" id="stat-processed">0</div>
+            </div>
+
+            <div class="stat-card border-yellow-500">
+                <div class="text-gray-500 text-sm font-medium mb-2">Queue Pending</div>
+                <div class="text-3xl font-bold text-yellow-600" id="stat-pending">0</div>
+            </div>
+
+            <div class="stat-card border-purple-500">
+                <div class="text-gray-500 text-sm font-medium mb-2">Unique Entities</div>
+                <div class="text-3xl font-bold text-purple-600" id="stat-entities">0</div>
+            </div>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="bg-white rounded-lg shadow-md mb-6">
+            <div class="border-b border-gray-200">
+                <nav class="flex -mb-px">
+                    <button class="tab-btn active py-4 px-6 text-sm font-medium border-b-2 border-blue-500 text-blue-600" data-tab="content">
+                        Content Library
+                    </button>
+                    <button class="tab-btn py-4 px-6 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300" data-tab="queue">
+                        Processing Queue
+                    </button>
+                </nav>
+            </div>
+        </div>
+
+        <!-- Content Tab -->
+        <div id="content-tab" class="tab-content">
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div class="flex-1">
+                        <input type="text" id="content-search" placeholder="Search by URL or title..."
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                    </div>
+                    <div class="flex gap-3">
+                        <select id="content-filter" class="px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-medium">
+                            <option value="all">All Content</option>
+                            <option value="processed">KG Processed</option>
+                            <option value="not_processed">Not Processed</option>
+                        </select>
+                        <button onclick="queueUnprocessed()" class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-sm hover:shadow-md transition-all duration-150">
+                            Queue Unprocessed
+                        </button>
+                        <button onclick="requeueAll()" class="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg shadow-sm hover:shadow-md transition-all duration-150">
+                            Requeue All
+                        </button>
+                        <button onclick="refreshContent()" class="px-5 py-2.5 bg-gray-600 hover:bg-gray-700 text-white font-semibold rounded-lg shadow-sm hover:shadow-md transition-all duration-150">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onclick="sortContent('id')">
+                                    ID <span id="sort-id"></span>
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onclick="sortContent('title')">
+                                    Title / URL <span id="sort-title"></span>
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onclick="sortContent('timestamp')">
+                                    Timestamp <span id="sort-timestamp"></span>
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onclick="sortContent('kg_processed')">
+                                    KG Status <span id="sort-kg_processed"></span>
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onclick="sortContent('kg_entity_count')">
+                                    Entities <span id="sort-kg_entity_count"></span>
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onclick="sortContent('kg_relationship_count')">
+                                    Relations <span id="sort-kg_relationship_count"></span>
+                                </th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="content-table-body" class="bg-white divide-y divide-gray-200">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="bg-gray-50 px-6 py-4 flex items-center justify-between border-t border-gray-200">
+                    <div class="text-sm text-gray-700">
+                        Showing <span id="content-showing">0</span> of <span id="content-total">0</span> entries
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="content-prev" onclick="prevContentPage()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50" disabled>
+                            Previous
+                        </button>
+                        <span class="px-4 py-2 text-gray-700">Page <span id="content-page">1</span></span>
+                        <button id="content-next" onclick="nextContentPage()" class="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-100 disabled:opacity-50" disabled>
+                            Next
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Queue Tab -->
+        <div id="queue-tab" class="tab-content hidden">
+            <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div class="flex gap-3">
+                        <select id="queue-filter" class="px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-medium" onchange="refreshQueue()">
+                            <option value="all">All Status</option>
+                            <option value="pending">Pending</option>
+                            <option value="processing">Processing</option>
+                            <option value="completed">Completed</option>
+                            <option value="failed">Failed</option>
+                            <option value="skipped">Skipped</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-3">
+                        <button onclick="requeueFailed()" class="px-5 py-2.5 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg shadow-sm hover:shadow-md transition-all duration-150">
+                            Requeue Failed
+                        </button>
+                        <button onclick="clearQueue()" class="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-sm hover:shadow-md transition-all duration-150">
+                            Clear Queue
+                        </button>
+                        <button onclick="refreshQueue()" class="px-5 py-2.5 bg-gray-600 hover:bg-gray-700 text-white font-semibold rounded-lg shadow-sm hover:shadow-md transition-all duration-150">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Auto-refresh Progress Bar -->
+                <div class="mt-4 bg-gray-200 rounded-full h-1 overflow-hidden">
+                    <div id="refresh-progress" class="bg-blue-600 h-full transition-all duration-100 ease-linear" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Queue ID</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Content</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Priority</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Queued</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retry Count</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queue-table-body" class="bg-white divide-y divide-gray-200">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Content Detail Modal -->
+    <div id="detail-modal" class="modal" onclick="closeDetailModal()">
+        <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+            <div class="p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
+                <div class="flex justify-between items-start">
+                    <h2 class="text-2xl font-bold text-gray-800" id="detail-title">Content Details</h2>
+                    <button onclick="closeDetailModal()" class="text-gray-400 hover:text-gray-600 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div id="detail-content" class="p-6">
+                <div class="flex items-center justify-center py-12">
+                    <div class="text-gray-500">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentContentPage = 1;
+        let currentContentTotal = 0;
+        const contentPerPage = 50;
+        let currentSortColumn = null;
+        let currentSortDirection = 'asc';
+        let cachedContentData = [];
+
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+
+                // Update tab buttons
+                document.querySelectorAll('.tab-btn').forEach(b => {
+                    b.classList.remove('active', 'border-blue-500', 'text-blue-600');
+                    b.classList.add('border-transparent', 'text-gray-500');
+                });
+                btn.classList.add('active', 'border-blue-500', 'text-blue-600');
+                btn.classList.remove('border-transparent', 'text-gray-500');
+
+                // Update tab content
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.add('hidden');
+                });
+                document.getElementById(`${tab}-tab`).classList.remove('hidden');
+
+                // Load data for active tab
+                if (tab === 'content') {
+                    refreshContent();
+                } else if (tab === 'queue') {
+                    refreshQueue();
+                }
+            });
+        });
+
+        // Search and filter
+        let searchTimeout;
+        document.getElementById('content-search').addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                currentContentPage = 1;
+                refreshContent();
+            }, 500);
+        });
+
+        document.getElementById('content-filter').addEventListener('change', () => {
+            currentContentPage = 1;
+            refreshContent();
+        });
+
+        // Load statistics
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const data = await response.json();
+
+                document.getElementById('stat-total').textContent = data.content.total;
+                document.getElementById('stat-processed').textContent = data.content.processed;
+                document.getElementById('stat-pending').textContent = data.queue.pending || 0;
+                document.getElementById('stat-entities').textContent = data.entities.unique_entities;
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        // Sort content
+        function sortContent(column) {
+            // Toggle sort direction if clicking the same column
+            if (currentSortColumn === column) {
+                currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSortColumn = column;
+                currentSortDirection = 'asc';
+            }
+
+            // Sort the cached data
+            const sortedData = [...cachedContentData].sort((a, b) => {
+                let aVal, bVal;
+
+                switch(column) {
+                    case 'id':
+                        aVal = a.id;
+                        bVal = b.id;
+                        break;
+                    case 'title':
+                        aVal = (a.title || a.url || '').toLowerCase();
+                        bVal = (b.title || b.url || '').toLowerCase();
+                        break;
+                    case 'timestamp':
+                        aVal = new Date(a.timestamp || 0);
+                        bVal = new Date(b.timestamp || 0);
+                        break;
+                    case 'kg_processed':
+                        aVal = a.kg_processed ? 1 : 0;
+                        bVal = b.kg_processed ? 1 : 0;
+                        break;
+                    case 'kg_entity_count':
+                        aVal = a.kg_entity_count || 0;
+                        bVal = b.kg_entity_count || 0;
+                        break;
+                    case 'kg_relationship_count':
+                        aVal = a.kg_relationship_count || 0;
+                        bVal = b.kg_relationship_count || 0;
+                        break;
+                    default:
+                        return 0;
+                }
+
+                // Compare values
+                if (aVal < bVal) return currentSortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return currentSortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            // Update sort indicators
+            document.querySelectorAll('th span[id^="sort-"]').forEach(span => {
+                span.textContent = '';
+            });
+            const indicator = currentSortDirection === 'asc' ? ' ▲' : ' ▼';
+            const sortSpan = document.getElementById(`sort-${column}`);
+            if (sortSpan) {
+                sortSpan.textContent = indicator;
+            }
+
+            // Re-render table with sorted data
+            renderContentTable(sortedData);
+        }
+
+        // Render content table
+        function renderContentTable(contentData) {
+            const tbody = document.getElementById('content-table-body');
+            tbody.innerHTML = '';
+
+            contentData.forEach(item => {
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-50';
+
+                const kgStatus = item.kg_processed ?
+                    '<span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">Processed</span>' :
+                    '<span class="px-2 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-800">Not Processed</span>';
+
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item.id}</td>
+                    <td class="px-6 py-4 text-sm">
+                        <div class="font-medium text-gray-900 truncate max-w-xs" title="${item.title || 'No title'}">${item.title || 'No title'}</div>
+                        <div class="text-gray-500 truncate max-w-xs" title="${item.url}">${item.url}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${formatDate(item.timestamp)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${kgStatus}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item.kg_entity_count || 0}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item.kg_relationship_count || 0}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                        <button onclick="viewContent(${item.id})" class="text-blue-600 hover:text-blue-800 mr-3">View</button>
+                        <button onclick="requeueContent(${item.id})" class="text-green-600 hover:text-green-800 mr-3">Requeue</button>
+                        <button onclick="deleteContent(${item.id})" class="text-red-600 hover:text-red-800">Delete</button>
+                    </td>
+                `;
+
+                tbody.appendChild(row);
+            });
+
+            // Update pagination
+            const start = (currentContentPage - 1) * contentPerPage + 1;
+            const end = Math.min(currentContentPage * contentPerPage, currentContentTotal);
+            document.getElementById('content-showing').textContent = contentData.length > 0 ? `${start}-${end}` : '0';
+            document.getElementById('content-total').textContent = currentContentTotal;
+            document.getElementById('content-page').textContent = currentContentPage;
+
+            document.getElementById('content-prev').disabled = currentContentPage === 1;
+            document.getElementById('content-next').disabled = end >= currentContentTotal;
+        }
+
+        // Load content
+        async function loadContent() {
+            try {
+                const search = document.getElementById('content-search').value;
+                const filter = document.getElementById('content-filter').value;
+
+                const params = new URLSearchParams({
+                    page: currentContentPage,
+                    per_page: contentPerPage,
+                    search: search,
+                    filter_kg: filter
+                });
+
+                const response = await fetch(`/api/content?${params}`);
+                const data = await response.json();
+
+                currentContentTotal = data.total;
+                cachedContentData = data.content;
+
+                renderContentTable(cachedContentData);
+            } catch (error) {
+                console.error('Failed to load content:', error);
+            }
+        }
+
+        // Load queue
+        async function loadQueue() {
+            try {
+                const filter = document.getElementById('queue-filter').value;
+                const params = new URLSearchParams({ status: filter });
+
+                const response = await fetch(`/api/queue?${params}`);
+                const data = await response.json();
+
+                const tbody = document.getElementById('queue-table-body');
+                tbody.innerHTML = '';
+
+                if (data.queue.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">No queue items found</td></tr>';
+                    return;
+                }
+
+                data.queue.forEach(item => {
+                    const row = document.createElement('tr');
+                    row.className = 'hover:bg-gray-50';
+
+                    const statusClass = `status-${item.status}`;
+
+                    row.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item.id}</td>
+                        <td class="px-6 py-4 text-sm">
+                            <div class="font-medium text-gray-900 truncate max-w-xs" title="${item.title || 'No title'}">${item.title || 'No title'}</div>
+                            <div class="text-gray-500 text-xs">ID: ${item.content_id}</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="px-2 py-1 text-xs font-medium rounded-full ${statusClass}">${item.status}</span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <input type="number" value="${item.priority}" min="1" max="10"
+                                   class="w-16 px-2 py-1 border border-gray-300 rounded"
+                                   onchange="updatePriority(${item.id}, this.value)">
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${formatDate(item.queued_at)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item.retry_count || 0}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm">
+                            <button onclick="viewContent(${item.content_id})" class="text-blue-600 hover:text-blue-800 mr-3">View</button>
+                            <button onclick="deleteQueueItem(${item.id})" class="text-red-600 hover:text-red-800">Remove</button>
+                        </td>
+                    `;
+
+                    tbody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('Failed to load queue:', error);
+            }
+        }
+
+        // View content details
+        async function viewContent(contentId) {
+            const modal = document.getElementById('detail-modal');
+            const contentDiv = document.getElementById('detail-content');
+
+            contentDiv.innerHTML = '<div class="flex items-center justify-center py-12"><div class="text-gray-500">Loading...</div></div>';
+            modal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+
+            try {
+                const response = await fetch(`/api/content/${contentId}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                document.getElementById('detail-title').textContent = data.title || 'No title';
+
+                let html = `
+                    <div class="space-y-6">
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Basic Info</h3>
+                            <div class="bg-gray-50 rounded p-4 space-y-2">
+                                <div><span class="font-medium">ID:</span> ${data.id}</div>
+                                <div><span class="font-medium">URL:</span> <a href="${data.url}" target="_blank" class="text-blue-600 hover:underline">${data.url}</a></div>
+                                <div><span class="font-medium">Timestamp:</span> ${formatDate(data.timestamp)}</div>
+                                <div><span class="font-medium">KG Processed:</span> ${data.kg_processed ? 'Yes' : 'No'}</div>
+                                ${data.kg_processed_at ? `<div><span class="font-medium">Processed At:</span> ${formatDate(data.kg_processed_at)}</div>` : ''}
+                                <div><span class="font-medium">Entities:</span> ${data.kg_entity_count || 0}</div>
+                                <div><span class="font-medium">Relationships:</span> ${data.kg_relationship_count || 0}</div>
+                            </div>
+                        </div>
+                `;
+
+                if (data.entities && data.entities.length > 0) {
+                    html += `
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Top Entities</h3>
+                            <div class="bg-gray-50 rounded p-4">
+                                <div class="flex flex-wrap gap-2">
+                                    ${data.entities.map(e => `
+                                        <span class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
+                                            ${e.entity_text} <span class="text-blue-600">(${e.entity_type_primary})</span>
+                                            <span class="text-blue-500 text-xs">×${e.occurrences}</span>
+                                        </span>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                if (data.relationships && data.relationships.length > 0) {
+                    html += `
+                        <div>
+                            <h3 class="text-lg font-semibold text-gray-800 mb-2">Relationships</h3>
+                            <div class="bg-gray-50 rounded p-4 space-y-2">
+                                ${data.relationships.slice(0, 20).map(r => `
+                                    <div class="text-sm">
+                                        <span class="font-medium text-blue-700">${r.subject_entity}</span>
+                                        <span class="text-gray-500 mx-2">→</span>
+                                        <span class="text-gray-600">${r.predicate}</span>
+                                        <span class="text-gray-500 mx-2">→</span>
+                                        <span class="font-medium text-green-700">${r.object_entity}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                html += '</div>';
+
+                contentDiv.innerHTML = html;
+            } catch (error) {
+                console.error('Failed to load content details:', error);
+                contentDiv.innerHTML = `
+                    <div class="flex flex-col items-center justify-center py-12">
+                        <div class="text-red-600 text-lg mb-2">Failed to load content</div>
+                        <div class="text-gray-500 text-sm">${error.message || 'Unknown error'}</div>
+                        <button onclick="closeDetailModal()" class="mt-4 btn-secondary">Close</button>
+                    </div>
+                `;
+            }
+        }
+
+        function closeDetailModal() {
+            document.getElementById('detail-modal').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('detail-modal');
+                if (modal.classList.contains('active')) {
+                    closeDetailModal();
+                }
+            }
+        });
+
+        // Actions
+        async function requeueContent(contentId) {
+            if (!confirm('Re-queue this content for KG processing?')) return;
+
+            try {
+                const response = await fetch(`/api/content/${contentId}/requeue`, { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(data.message);
+                    refreshAll();
+                } else {
+                    alert('Failed to requeue content');
+                }
+            } catch (error) {
+                console.error('Failed to requeue:', error);
+                alert('Failed to requeue content');
+            }
+        }
+
+        async function deleteContent(contentId) {
+            if (!confirm('Delete this content? This cannot be undone.')) return;
+
+            try {
+                const response = await fetch(`/api/content/${contentId}`, { method: 'DELETE' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(data.message);
+                    refreshAll();
+                } else {
+                    alert('Failed to delete content');
+                }
+            } catch (error) {
+                console.error('Failed to delete:', error);
+                alert('Failed to delete content');
+            }
+        }
+
+        async function deleteQueueItem(queueId) {
+            if (!confirm('Remove this item from the queue?')) return;
+
+            try {
+                const response = await fetch(`/api/queue/${queueId}`, { method: 'DELETE' });
+                const data = await response.json();
+
+                if (data.success) {
+                    refreshAll();
+                } else {
+                    alert('Failed to remove queue item');
+                }
+            } catch (error) {
+                console.error('Failed to remove:', error);
+                alert('Failed to remove queue item');
+            }
+        }
+
+        async function updatePriority(queueId, priority) {
+            try {
+                const response = await fetch(`/api/queue/${queueId}/priority`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ priority: parseInt(priority) })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    refreshQueue();
+                }
+            } catch (error) {
+                console.error('Failed to update priority:', error);
+            }
+        }
+
+        async function clearQueue() {
+            if (!confirm('Clear the entire queue? This cannot be undone.')) return;
+
+            try {
+                const response = await fetch('/api/queue/clear', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(data.message);
+                    refreshAll();
+                } else {
+                    alert('Failed to clear queue');
+                }
+            } catch (error) {
+                console.error('Failed to clear queue:', error);
+                alert('Failed to clear queue');
+            }
+        }
+
+        async function requeueAll() {
+            if (!confirm('Re-queue ALL content for KG processing? This will reset all existing processing status.')) return;
+
+            try {
+                const response = await fetch('/api/queue/requeue-all', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(data.message);
+                    refreshAll();
+                } else {
+                    alert('Failed to requeue all');
+                }
+            } catch (error) {
+                console.error('Failed to requeue all:', error);
+                alert('Failed to requeue all');
+            }
+        }
+
+        async function queueUnprocessed() {
+            if (!confirm('Queue all unprocessed content for KG processing? This will add items that were never processed to the queue.')) return;
+
+            try {
+                const response = await fetch('/api/queue/queue-unprocessed', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(data.message);
+                    refreshAll();
+                } else {
+                    alert('Failed to queue unprocessed content');
+                }
+            } catch (error) {
+                console.error('Failed to queue unprocessed:', error);
+                alert('Failed to queue unprocessed content');
+            }
+        }
+
+        async function requeueFailed() {
+            if (!confirm('Re-queue all failed items?')) return;
+
+            try {
+                const response = await fetch('/api/queue/requeue-failed', { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(data.message);
+                    refreshAll();
+                } else {
+                    alert('Failed to requeue failed items');
+                }
+            } catch (error) {
+                console.error('Failed to requeue failed:', error);
+                alert('Failed to requeue failed items');
+            }
+        }
+
+        // Pagination
+        function prevContentPage() {
+            if (currentContentPage > 1) {
+                currentContentPage--;
+                refreshContent();
+            }
+        }
+
+        function nextContentPage() {
+            const totalPages = Math.ceil(currentContentTotal / contentPerPage);
+            if (currentContentPage < totalPages) {
+                currentContentPage++;
+                refreshContent();
+            }
+        }
+
+        // Refresh functions
+        function refreshContent() {
+            loadStats();
+            loadContent();
+        }
+
+        function refreshQueue() {
+            loadStats();
+            loadQueue();
+        }
+
+        function refreshAll() {
+            loadStats();
+            loadContent();
+            loadQueue();
+        }
+
+        // Utility functions
+        function formatDate(timestamp) {
+            if (!timestamp) return 'N/A';
+            const date = new Date(timestamp);
+            return date.toLocaleString();
+        }
+
+        // Auto-refresh every 30 seconds
+        // Auto-refresh with progress bar
+        let progressInterval;
+        let refreshTimer;
+        const REFRESH_INTERVAL = 10000; // 10 seconds
+
+        function startProgressBar() {
+            const progressBar = document.getElementById('refresh-progress');
+            let progress = 0;
+
+            // Clear existing intervals
+            if (progressInterval) clearInterval(progressInterval);
+            if (refreshTimer) clearTimeout(refreshTimer);
+
+            // Reset progress bar
+            progressBar.style.width = '0%';
+
+            // Update progress bar every 100ms
+            progressInterval = setInterval(() => {
+                progress += (100 / REFRESH_INTERVAL) * 100;
+                progressBar.style.width = Math.min(progress, 100) + '%';
+            }, 100);
+
+            // Refresh data after interval
+            refreshTimer = setTimeout(() => {
+                loadStats();
+                const activeTab = document.querySelector('.tab-btn.active').dataset.tab;
+                if (activeTab === 'content') {
+                    loadContent();
+                } else if (activeTab === 'queue') {
+                    loadQueue();
+                }
+                startProgressBar(); // Restart
+            }, REFRESH_INTERVAL);
+        }
+
+        // Initial load
+        refreshAll();
+
+        // Start progress bar
+        startProgressBar();
+    </script>
+</body>
+</html>
