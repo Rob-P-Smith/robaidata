@@ -1,1 +1,6 @@
 *.db
+*.db-shm
+*.db-wal
+
+# Model cache directory
+models/
